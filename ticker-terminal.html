@@ -197,19 +197,26 @@
 
     <script>
         const socket = io('http://localhost:5000');
-        const symbols = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "EURGBP", "S&P500"];
-        const dataHistory = {};
+        // Symbols are sent by the server (see symbols.json)
+        let symbols = [];
+        let symbolsKey = '';
+        let dataHistory = {};
         const MAX_HISTORY = 300;
 
-        symbols.forEach(s => {
-            dataHistory[s] = { prices: [], high: -Infinity, low: Infinity, lastPrice: 0, prevIntervalPrice: 0 };
-        });
-
-        function initUI() {
+        // Build (or rebuild) one card per symbol from the server's symbol list
+        function initUI(symbolList) {
             const dash = document.getElementById('dashboard');
+            dash.querySelectorAll('.asset-card').forEach(card => card.remove());
+
+            symbols = symbolList.map(item => item.symbol);
+            dataHistory = {};
+            symbols.forEach(s => {
+                dataHistory[s] = { prices: [], high: -Infinity, low: Infinity, lastPrice: 0, prevIntervalPrice: 0 };
+            });
+
             symbols.forEach(s => {
                 const card = document.createElement('div');
-                card.className = 'card';
+                card.className = 'card asset-card';
                 card.id = `card-${s}`;
                 card.innerHTML = `
                     <div class="sparkline-container">
@@ -255,6 +262,15 @@
             addToLog("NETWORK_HANDSHAKE_COMPLETE");
         });
 
+        socket.on('config', (config) => {
+            // Only rebuild when the list actually changed (keeps history across reconnects)
+            const key = JSON.stringify(config.symbols);
+            if (key === symbolsKey) return;
+            symbolsKey = key;
+            initUI(config.symbols);
+            addToLog(`SYMBOL_TABLE_LOADED: ${symbols.length} INSTRUMENTS`);
+        });
+
         socket.on('price_update', (data) => {
             const info = dataHistory[data.symbol];
             if (info) {
@@ -272,6 +288,7 @@
         // Advanced Verbose Analytics Loop
         const vTypes = ["MATH", "KERN", "SYNC", "STAT", "PROC"];
         setInterval(() => {
+            if (symbols.length === 0) return; // waiting for the server's symbol list
             const sym = symbols[Math.floor(Math.random() * symbols.length)];
             const type = vTypes[Math.floor(Math.random() * vTypes.length)];
             const info = dataHistory[sym];
@@ -353,8 +370,6 @@
                 }
             });
         }, 1000);
-
-        initUI();
     </script>
 </body>
 </html>

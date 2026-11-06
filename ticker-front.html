@@ -180,29 +180,58 @@
     <script>
         const socket = io('http://localhost:5000');
         let serverOffset = 0;
-        const symbols = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "EURGBP", "S&P500"];
-        const precisions = {"XAUUSD": 2, "EURUSD": 5, "GBPUSD": 5, "USDJPY": 3, "EURGBP": 5, "S&P500": 2};
+        // Symbols and their decimal places are sent by the server (see symbols.json)
+        let symbolsKey = '';
+        let precisions = {};
 
-        // Initialize DOM structure
-        function initTicker() {
+        function createAsset(sym, suffix) {
+            const asset = document.createElement('div');
+            asset.className = 'asset';
+
+            const name = document.createElement('span');
+            name.className = 'asset-name';
+            name.textContent = sym;
+
+            const priceContainer = document.createElement('div');
+            priceContainer.className = 'price-container';
+
+            const price = document.createElement('span');
+            price.id = sym + suffix;
+            price.className = 'asset-price';
+            price.textContent = '---';
+
+            const change = document.createElement('span');
+            change.id = sym + '_change' + suffix;
+            change.className = 'asset-change';
+            change.textContent = '(0.00%)';
+
+            priceContainer.append(price, change);
+            asset.append(name, priceContainer);
+            return asset;
+        }
+
+        // Build (or rebuild) the scrolling track from the server's symbol list
+        function initTicker(symbolList) {
             const original = document.getElementById('assets-original');
             const duplicate = document.getElementById('assets-duplicate');
-            
-            symbols.forEach(sym => {
-                const assetHtml = `
-                    <div class="asset">
-                        <span class="asset-name">${sym}</span>
-                        <div class="price-container">
-                            <span id="${sym}" class="asset-price">---</span>
-                            <span id="${sym}_change" class="asset-change">(0.00%)</span>
-                        </div>
-                    </div>
-                `;
-                original.innerHTML += assetHtml;
-                duplicate.innerHTML += assetHtml.replace(`id="${sym}"`, `id="${sym}2"`).replace(`id="${sym}_change"`, `id="${sym}_change2"`);
+            original.replaceChildren();
+            duplicate.replaceChildren();
+
+            precisions = {};
+            symbolList.forEach(({ symbol, digits }) => {
+                precisions[symbol] = digits;
+                original.appendChild(createAsset(symbol, ''));
+                duplicate.appendChild(createAsset(symbol, '2'));
             });
         }
-        initTicker();
+
+        socket.on('config', (config) => {
+            // Only rebuild when the list actually changed (avoids a visual reset on reconnect)
+            const key = JSON.stringify(config.symbols);
+            if (key === symbolsKey) return;
+            symbolsKey = key;
+            initTicker(config.symbols);
+        });
 
         const zones = [
             { label: 'UTC', zone: 'UTC' },
@@ -272,7 +301,7 @@
                 
                 if (!el || !changeEl) return;
                 
-                const precision = precisions[data.symbol] || 2;
+                const precision = precisions[data.symbol] ?? 2;
                 const oldPrice = parseFloat(el.innerText.replace(/,/g, '')) || 0;
                 const newPrice = data.price;
                 

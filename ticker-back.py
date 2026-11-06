@@ -4,6 +4,8 @@ eventlet.monkey_patch()
 import MetaTrader5 as mt5
 from flask import Flask
 from flask_socketio import SocketIO, emit
+import json
+import os
 import threading
 import time
 from datetime import datetime
@@ -16,7 +18,23 @@ if not mt5.initialize():
     print("MT5 Initialize failed")
     quit()
 
-symbols = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "EURGBP", "S&P500"]
+# 2. Load the symbol list (single source of truth for the server and all pages)
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "symbols.json")
+with open(CONFIG_PATH, encoding="utf-8") as f:
+    configured_symbols = json.load(f)["symbols"]
+
+# Only keep symbols this broker actually offers; read display precision from MT5
+symbols = []
+symbol_digits = {}
+for symbol in configured_symbols:
+    if not mt5.symbol_select(symbol, True):
+        print(f"[WARN] {symbol} is not available from this broker - skipping it")
+        continue
+    info = mt5.symbol_info(symbol)
+    symbol_digits[symbol] = info.digits if info else 2
+    symbols.append(symbol)
+
+print(f"Streaming {len(symbols)} symbols: {', '.join(symbols)}")
 
 # Dictionary to store the previous day's close price for each symbol
 ref_prices = {}
@@ -25,11 +43,6 @@ def update_ref_prices():
     """Fetches the closing price of the PREVIOUS day for all symbols"""
     global ref_prices
     for symbol in symbols:
-        # Ensure symbol is selected in Market Watch
-        if not mt5.symbol_select(symbol, True):
-            print(f"Failed to select {symbol}")
-            continue
-
         # Index 1 is the previous completed day (yesterday)
         rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_D1, 1, 1)
         if rates is not None and len(rates) > 0:
@@ -71,6 +84,13 @@ def background_tick_reader():
                 })
 
         time.sleep(0.1)
+
+@socketio.on('connect')
+def send_config():
+    """Tells each newly connected page which symbols to show and their precision"""
+    emit('config', {
+        'symbols': [{'symbol': s, 'digits': symbol_digits[s]} for s in symbols]
+    })
 
 @app.route('/')
 def index():
