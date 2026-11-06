@@ -8,3 +8,11 @@ To change which instruments are shown, edit symbols.json (use the exact
 symbol names from your broker's MT5 Market Watch) and restart run.bat.
 Both pages pick up the list and each symbol's decimal places from the
 server automatically; symbols the broker doesn't offer are skipped.
+
+The pages load their script and fonts from the vendor/ folder, so they
+work without internet access. Keep vendor/ next to the HTML files.
+
+Clock: the server checks this PC's clock against NTP (time.google.com,
+pool.ntp.org, time.windows.com) at startup and every 15 minutes, and
+the on-screen clocks apply the correction. If NTP is unreachable, the
+last good correction (or the plain PC clock) is used.

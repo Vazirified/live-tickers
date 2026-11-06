@@ -4,10 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TERMINAL_v1.0.4_STABLE</title>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <!-- Local copies (vendor/) so the overlay works without internet -->
+    <script src="vendor/socket.io.min.js"></script>
+    <link href="vendor/fonts/fonts.css" rel="stylesheet">
     <style>
         :root {
             --term-white: rgba(255, 255, 255, 0.4); /* 60% transparent (0.4 opacity) */
@@ -200,6 +199,8 @@
         // Symbols are sent by the server (see symbols.json)
         let symbols = [];
         let symbolsKey = '';
+        let serverOffset = 0; // clock correction from the server's NTP check (ms)
+        const correctedNow = () => new Date(Date.now() + serverOffset);
         let dataHistory = {};
         const MAX_HISTORY = 300;
 
@@ -241,7 +242,7 @@
 
         function addToLog(msg) {
             const log = document.getElementById('log');
-            const time = new Date().toISOString().substr(11, 8); // Absolute UTC
+            const time = correctedNow().toISOString().substr(11, 8); // Absolute UTC
             log.innerHTML = `[${time}] ${msg}<br>` + log.innerHTML;
             if (log.innerHTML.length > 2000) log.innerHTML = log.innerHTML.substring(0, 2000);
         }
@@ -261,6 +262,8 @@
             document.getElementById('session-id').innerText = socket.id.substring(0, 6);
             addToLog("NETWORK_HANDSHAKE_COMPLETE");
         });
+
+        socket.on('time_offset', (data) => { serverOffset = data.offset_ms; });
 
         socket.on('config', (config) => {
             // Only rebuild when the list actually changed (keeps history across reconnects)
@@ -307,7 +310,7 @@
 
         // Clock logic (Absolute UTC)
         setInterval(() => {
-            const now = new Date();
+            const now = correctedNow();
             document.getElementById('clock').innerText = now.toISOString().substr(11, 8) + ' UTC';
 
             symbols.forEach(s => {

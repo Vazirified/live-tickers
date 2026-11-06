@@ -1,0 +1,26 @@
+/* Local copies of the Google Fonts used by the overlays (Latin subset, woff2).
+   All three fonts are licensed under the SIL Open Font License 1.1. */
+
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 700;
+    font-display: block;
+    src: url('inter-700-latin.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: 700;
+    font-display: block;
+    src: url('jetbrains-mono-700-latin.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'VT323';
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+    src: url('vt323-400-latin.woff2') format('woff2');
+}

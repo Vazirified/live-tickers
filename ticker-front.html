@@ -4,10 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MT5 Live Ticker Stripe</title>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@700&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+    <!-- Local copies (vendor/) so the overlay works without internet -->
+    <script src="vendor/socket.io.min.js"></script>
+    <link href="vendor/fonts/fonts.css" rel="stylesheet">
     <style>
         :root {
             --bg: #000000;
@@ -280,16 +279,8 @@
         }
         setInterval(updateClock, 1000);
 
-        async function syncTime() {
-            try {
-                const start = Date.now();
-                const response = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
-                const data = await response.json();
-                serverOffset = (new Date(data.utc_datetime).getTime() + (Date.now() - start)/2) - Date.now();
-            } catch (e) {}
-        }
-        syncTime();
-        setInterval(syncTime, 900000);
+        // Clock correction measured by the server via NTP (0 = use the PC clock as-is)
+        socket.on('time_offset', (data) => { serverOffset = data.offset_ms; });
 
         socket.on('connect', () => document.getElementById('status-dot').classList.add('online'));
         socket.on('disconnect', () => document.getElementById('status-dot').classList.remove('online'));

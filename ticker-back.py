@@ -6,6 +6,8 @@ from flask import Flask
 from flask_socketio import SocketIO, emit
 import json
 import os
+import socket
+import struct
 import threading
 import time
 from datetime import datetime
@@ -85,12 +87,53 @@ def background_tick_reader():
 
         time.sleep(0.1)
 
+# --- Clock correction via NTP -------------------------------------------------
+# The on-screen clocks use this PC's time. We measure how far it is off from
+# NTP and send the correction to the pages. If NTP can't be reached, the last
+# good correction is kept (or 0 = plain PC clock if it never succeeded).
+NTP_SERVERS = ["time.google.com", "pool.ntp.org", "time.windows.com"]
+NTP_INTERVAL = 900  # seconds (15 minutes)
+NTP_EPOCH_DELTA = 2208988800  # seconds between 1900-01-01 and 1970-01-01
+
+clock_offset_ms = 0
+
+def query_ntp_offset(host):
+    """Returns (NTP time - PC time) in seconds for one server, or raises"""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(3)
+        t0 = time.time()
+        s.sendto(b'\x1b' + 47 * b'\0', (host, 123))  # SNTP v3 client request
+        data, _ = s.recvfrom(48)
+        t1 = time.time()
+    secs, frac = struct.unpack('!II', data[40:48])  # server transmit timestamp
+    ntp_time = secs - NTP_EPOCH_DELTA + frac / 2**32
+    return ntp_time - (t0 + t1) / 2
+
+def background_clock_sync():
+    global clock_offset_ms
+    while True:
+        for host in NTP_SERVERS:
+            try:
+                offset = query_ntp_offset(host)
+            except OSError as e:
+                print(f"[WARN] NTP {host} failed: {e}")
+                continue
+            clock_offset_ms = round(offset * 1000)
+            direction = "slow" if offset > 0 else "fast"
+            print(f"Clock check ({host}): PC clock is {abs(offset):.2f}s {direction}")
+            socketio.emit('time_offset', {'offset_ms': clock_offset_ms})
+            break
+        else:
+            print(f"[WARN] No NTP server reachable - keeping correction of {clock_offset_ms} ms")
+        time.sleep(NTP_INTERVAL)
+
 @socketio.on('connect')
 def send_config():
-    """Tells each newly connected page which symbols to show and their precision"""
+    """Tells each newly connected page which symbols to show, their precision and the clock correction"""
     emit('config', {
         'symbols': [{'symbol': s, 'digits': symbol_digits[s]} for s in symbols]
     })
+    emit('time_offset', {'offset_ms': clock_offset_ms})
 
 @app.route('/')
 def index():
@@ -100,4 +143,7 @@ if __name__ == '__main__':
     thread = threading.Thread(target=background_tick_reader)
     thread.daemon = True
     thread.start()
+    clock_thread = threading.Thread(target=background_clock_sync)
+    clock_thread.daemon = True
+    clock_thread.start()
     socketio.run(app, port=5000)
