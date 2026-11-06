@@ -1,10 +1,8 @@
-import eventlet
-eventlet.monkey_patch()
-
 import MetaTrader5 as mt5
 from flask import Flask
 from flask_socketio import SocketIO, emit
 import json
+import logging
 import os
 import socket
 import struct
@@ -13,7 +11,12 @@ import time
 from datetime import datetime, timezone
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+# "threading" mode: plain OS threads + the simple-websocket package (no eventlet).
+# MT5 calls that block (e.g. waiting for the terminal) no longer freeze the web server.
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+
+# Don't print a console line for every HTTP request the pages make
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 # Load the symbol list (single source of truth for the server and all pages)
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "symbols.json")
@@ -242,4 +245,6 @@ if __name__ == '__main__':
     clock_thread = threading.Thread(target=background_clock_sync)
     clock_thread.daemon = True
     clock_thread.start()
-    socketio.run(app, port=5000)
+    # Werkzeug's built-in server is fine here: it only listens on 127.0.0.1
+    # and serves a couple of local OBS browser sources.
+    socketio.run(app, host="127.0.0.1", port=5000, allow_unsafe_werkzeug=True)

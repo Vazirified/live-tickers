@@ -1,4 +1,4 @@
 MetaTrader5
 Flask
 Flask-SocketIO
-eventlet
+simple-websocket
