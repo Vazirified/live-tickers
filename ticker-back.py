@@ -15,28 +15,76 @@ from datetime import datetime, timezone
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# 1. Initialize MT5
-if not mt5.initialize():
-    print("MT5 Initialize failed")
-    quit()
-
-# 2. Load the symbol list (single source of truth for the server and all pages)
+# Load the symbol list (single source of truth for the server and all pages)
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "symbols.json")
 with open(CONFIG_PATH, encoding="utf-8") as f:
     configured_symbols = json.load(f)["symbols"]
 
-# Only keep symbols this broker actually offers; read display precision from MT5
+# Symbols actually streamed (filled in once MT5 is connected) and their precision
 symbols = []
 symbol_digits = {}
-for symbol in configured_symbols:
-    if not mt5.symbol_select(symbol, True):
-        print(f"[WARN] {symbol} is not available from this broker - skipping it")
-        continue
-    info = mt5.symbol_info(symbol)
-    symbol_digits[symbol] = info.digits if info else 2
-    symbols.append(symbol)
 
-print(f"Streaming {len(symbols)} symbols: {', '.join(symbols)}")
+def config_payload():
+    return {'symbols': [{'symbol': s, 'digits': symbol_digits[s]} for s in symbols]}
+
+def setup_symbols():
+    """Keeps only symbols this broker offers, reads their precision, tells the pages"""
+    global symbols, symbol_digits
+    new_symbols, new_digits = [], {}
+    for symbol in configured_symbols:
+        if not mt5.symbol_select(symbol, True):
+            print(f"[WARN] {symbol} is not available from this broker - skipping it")
+            continue
+        info = mt5.symbol_info(symbol)
+        new_digits[symbol] = info.digits if info else 2
+        new_symbols.append(symbol)
+    symbols, symbol_digits = new_symbols, new_digits
+    print(f"Streaming {len(symbols)} symbols: {', '.join(symbols)}")
+    socketio.emit('config', config_payload())
+
+# --- MT5 connection & feed status -----------------------------------------------
+# The server never quits because of MT5: it keeps retrying, and tells the pages
+# whether the price feed is live so they can show it.
+MT5_RETRY_SECONDS = 5
+
+feed_online = False
+feed_message = "Connecting to MetaTrader 5..."
+
+def set_feed_status(online, message):
+    """Logs and broadcasts feed status changes (only when something changed)"""
+    global feed_online, feed_message
+    if online == feed_online and message == feed_message:
+        return
+    feed_online, feed_message = online, message
+    print(f"[FEED {'UP' if online else 'DOWN'}] {message}")
+    socketio.emit('feed_status', {'online': online, 'message': message})
+
+def mt5_problem():
+    """Returns None if MT5 is running and connected to the broker, else a reason"""
+    info = mt5.terminal_info()
+    if info is None:
+        return "MetaTrader 5 is not running or was closed"
+    if not info.connected:
+        return "MetaTrader 5 is not connected to the broker (check login / internet)"
+    return None
+
+def connect_mt5():
+    """One connection attempt. Returns True once MT5 is ready and symbols are set up."""
+    if mt5.terminal_info() is None:
+        mt5.shutdown()  # drop any dead connection before starting a new one
+        # Starts the MT5 terminal if it isn't running yet
+        if not mt5.initialize(timeout=10000):
+            code, msg = mt5.last_error()
+            set_feed_status(False, f"Can't reach MetaTrader 5 ({code}: {msg}) - retrying every {MT5_RETRY_SECONDS}s")
+            return False
+    problem = mt5_problem()
+    if problem:
+        set_feed_status(False, f"{problem} - retrying every {MT5_RETRY_SECONDS}s")
+        return False
+    setup_symbols()
+    update_ref_prices()
+    set_feed_status(True, f"Streaming {len(symbols)} symbols")
+    return True
 
 # Previous day's close for each symbol (the reference for the % change)
 ref_prices = {}
@@ -92,18 +140,31 @@ def check_rollover(symbol, tick_time):
     last_ref_attempt[symbol] = (tick_day_start, now)
     update_ref_price(symbol)
 
-# Initial fetch
-update_ref_prices()
-
 def background_tick_reader():
-    """Reads prices from MT5 and pushes to Webpage via WebSocket"""
-    last_prices = {symbol: 0 for symbol in symbols}
+    """Connects to MT5 (and reconnects), reads prices and pushes them to the pages"""
+    last_prices = {}
+    last_health_check = 0
 
     while True:
+        if not feed_online:
+            if not connect_mt5():
+                time.sleep(MT5_RETRY_SECONDS)
+                continue
+            last_prices = {}  # (re)connected: send every price again
+            last_health_check = time.time()
+
+        # Once a second, make sure MT5 is still there and connected to the broker
+        if time.time() - last_health_check >= 1:
+            last_health_check = time.time()
+            problem = mt5_problem()
+            if problem:
+                set_feed_status(False, f"Lost price feed: {problem} - reconnecting")
+                continue
+
         for symbol in symbols:
             tick = mt5.symbol_info_tick(symbol)
             # Ensure we have a valid tick with a positive bid price
-            if tick and tick.bid > 0 and tick.bid != last_prices[symbol]:
+            if tick and tick.bid > 0 and tick.bid != last_prices.get(symbol):
                 last_prices[symbol] = tick.bid
 
                 # Switch to the new previous close the moment the day rolls over
@@ -165,11 +226,10 @@ def background_clock_sync():
 
 @socketio.on('connect')
 def send_config():
-    """Tells each newly connected page which symbols to show, their precision and the clock correction"""
-    emit('config', {
-        'symbols': [{'symbol': s, 'digits': symbol_digits[s]} for s in symbols]
-    })
+    """Tells each newly connected page the symbols, clock correction and feed status"""
+    emit('config', config_payload())
     emit('time_offset', {'offset_ms': clock_offset_ms})
+    emit('feed_status', {'online': feed_online, 'message': feed_message})
 
 @app.route('/')
 def index():

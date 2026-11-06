@@ -154,6 +154,8 @@
             z-index: 200;
         }
         .online { background: var(--up-color) !important; box-shadow: 0 0 5px var(--up-color); }
+        /* Server reachable but MetaTrader 5 feed is down */
+        .feed-down { background: #ffaa00 !important; box-shadow: 0 0 5px #ffaa00; }
     </style>
 </head>
 <body>
@@ -282,8 +284,23 @@
         // Clock correction measured by the server via NTP (0 = use the PC clock as-is)
         socket.on('time_offset', (data) => { serverOffset = data.offset_ms; });
 
-        socket.on('connect', () => document.getElementById('status-dot').classList.add('online'));
-        socket.on('disconnect', () => document.getElementById('status-dot').classList.remove('online'));
+        // Status dot: green = live, amber = server up but MT5 feed down, grey = server unreachable
+        let serverConnected = false;
+        let feedOnline = false;
+        let feedMessage = '';
+        function updateStatusDot() {
+            const dot = document.getElementById('status-dot');
+            dot.classList.toggle('online', serverConnected && feedOnline);
+            dot.classList.toggle('feed-down', serverConnected && !feedOnline);
+            dot.title = serverConnected ? feedMessage : 'Ticker server not reachable';
+        }
+        socket.on('connect', () => { serverConnected = true; updateStatusDot(); });
+        socket.on('disconnect', () => { serverConnected = false; updateStatusDot(); });
+        socket.on('feed_status', (data) => {
+            feedOnline = data.online;
+            feedMessage = data.message;
+            updateStatusDot();
+        });
 
         socket.on('price_update', (data) => {
             [data.symbol, data.symbol + '2'].forEach((id, idx) => {

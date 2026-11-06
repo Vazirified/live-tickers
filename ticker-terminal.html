@@ -166,7 +166,7 @@
 
     <header>
         <div class="header-brand">VAZIRIFIEDFX WVM TERMINAL</div>
-        <div>LINK: <span id="conn-status" class="blink">OFFLINE</span> // S1_FEED</div>
+        <div>LINK: <span id="conn-status" class="blink">OFFLINE</span> // S1_FEED: <span id="feed-status" class="blink">WAIT</span></div>
         <div id="clock">00:00:00 UTC</div>
     </header>
 
@@ -261,6 +261,31 @@
             document.getElementById('conn-status').classList.remove('blink');
             document.getElementById('session-id').innerText = socket.id.substring(0, 6);
             addToLog("NETWORK_HANDSHAKE_COMPLETE");
+        });
+
+        socket.on('disconnect', () => {
+            const conn = document.getElementById('conn-status');
+            conn.innerText = 'OFFLINE';
+            conn.classList.add('blink');
+            setFeedLabel('WAIT', true);
+            lastFeedMessage = null;
+            addToLog("NETWORK_LINK_LOST // RETRYING");
+        });
+
+        // MetaTrader 5 feed status from the server
+        let lastFeedMessage = null;
+        function setFeedLabel(text, blink) {
+            const feed = document.getElementById('feed-status');
+            feed.innerText = text;
+            feed.classList.toggle('blink', blink);
+        }
+        socket.on('feed_status', (data) => {
+            setFeedLabel(data.online ? 'LIVE' : 'DOWN', !data.online);
+            // Log every change (up/down, or a different reason while down)
+            if (data.message !== lastFeedMessage) {
+                addToLog(data.online ? `FEED_RESTORED // ${data.message}` : `FEED_DOWN // ${data.message}`);
+                lastFeedMessage = data.message;
+            }
         });
 
         socket.on('time_offset', (data) => { serverOffset = data.offset_ms; });
