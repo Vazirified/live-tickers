@@ -10,7 +10,7 @@ import socket
 import struct
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -38,20 +38,59 @@ for symbol in configured_symbols:
 
 print(f"Streaming {len(symbols)} symbols: {', '.join(symbols)}")
 
-# Dictionary to store the previous day's close price for each symbol
+# Previous day's close for each symbol (the reference for the % change)
 ref_prices = {}
+# Open time (broker server time) of the daily bar that reference belongs to,
+# i.e. the "current day" at the time we fetched it
+ref_day_start = {}
+# Last time we tried to refresh each symbol (limits retries to once a second)
+last_ref_attempt = {}
+
+SECONDS_PER_DAY = 86400
+
+def update_ref_price(symbol):
+    """Fetches the PREVIOUS day's close and remembers which day it belongs to.
+
+    Returns True if the reference moved to a newer day (or was set for the first time).
+    """
+    # Two most recent daily bars, oldest first: [yesterday, today]
+    rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_D1, 0, 2)
+    if rates is None or len(rates) < 2:
+        print(f"Failed to get previous close for {symbol}")
+        return False
+    day_start = int(rates[1]['time'])
+    if day_start <= ref_day_start.get(symbol, -1):
+        return False  # MT5 hasn't started the new daily bar yet
+    ref_prices[symbol] = float(rates[0]['close'])
+    ref_day_start[symbol] = day_start
+    day = datetime.fromtimestamp(day_start, timezone.utc).strftime('%Y-%m-%d')
+    print(f"Updated Reference (Prev Close) for {symbol}: {ref_prices[symbol]} (day {day})")
+    return True
 
 def update_ref_prices():
-    """Fetches the closing price of the PREVIOUS day for all symbols"""
-    global ref_prices
     for symbol in symbols:
-        # Index 1 is the previous completed day (yesterday)
-        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_D1, 1, 1)
-        if rates is not None and len(rates) > 0:
-            ref_prices[symbol] = rates[0]['close']
-            print(f"Updated Reference (Prev Close) for {symbol}: {ref_prices[symbol]}")
-        else:
-            print(f"Failed to get previous close for {symbol}")
+        update_ref_price(symbol)
+
+def check_rollover(symbol, tick_time):
+    """Refreshes the reference as soon as a tick from a new trading day arrives.
+
+    Tick and bar times are both broker server time, so comparing them is
+    reliable regardless of this PC's time zone. If MT5 hasn't built the new
+    daily bar yet, the stored day doesn't change and we retry a second later.
+    """
+    if tick_time <= 0:
+        return
+    tick_day_start = tick_time - tick_time % SECONDS_PER_DAY
+    if tick_day_start <= ref_day_start.get(symbol, 0):
+        return
+    now = time.time()
+    last_attempt = last_ref_attempt.get(symbol, (None, 0))
+    if last_attempt[0] == tick_day_start and now - last_attempt[1] < 1:
+        return
+    if last_attempt[0] != tick_day_start:
+        print(f"New trading day detected for {symbol} - refreshing reference")
+    last_ref_attempt[symbol] = (tick_day_start, now)
+    update_ref_price(symbol)
 
 # Initial fetch
 update_ref_prices()
@@ -59,20 +98,17 @@ update_ref_prices()
 def background_tick_reader():
     """Reads prices from MT5 and pushes to Webpage via WebSocket"""
     last_prices = {symbol: 0 for symbol in symbols}
-    last_ref_update = time.time()
 
     while True:
-        # Re-fetch reference prices every hour (to catch daily rollover)
-        if time.time() - last_ref_update > 3600:
-            update_ref_prices()
-            last_ref_update = time.time()
-
         for symbol in symbols:
             tick = mt5.symbol_info_tick(symbol)
             # Ensure we have a valid tick with a positive bid price
             if tick and tick.bid > 0 and tick.bid != last_prices[symbol]:
                 last_prices[symbol] = tick.bid
-                
+
+                # Switch to the new previous close the moment the day rolls over
+                check_rollover(symbol, tick.time)
+
                 # Calculate percentage change from previous close
                 change_pct = 0.0
                 if symbol in ref_prices and ref_prices[symbol] != 0:
