@@ -1,5 +1,5 @@
 import MetaTrader5 as mt5
-from flask import Flask
+from flask import Flask, abort, send_from_directory
 from flask_socketio import SocketIO, emit
 import json
 import logging
@@ -10,7 +10,9 @@ import threading
 import time
 from datetime import datetime, timezone
 
-app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app = Flask(__name__, static_folder=None)
 # "threading" mode: plain OS threads + the simple-websocket package (no eventlet).
 # MT5 calls that block (e.g. waiting for the terminal) no longer freeze the web server.
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
@@ -19,7 +21,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 # Load the symbol list (single source of truth for the server and all pages)
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "symbols.json")
+CONFIG_PATH = os.path.join(BASE_DIR, "symbols.json")
 with open(CONFIG_PATH, encoding="utf-8") as f:
     configured_symbols = json.load(f)["symbols"]
 
@@ -234,9 +236,29 @@ def send_config():
     emit('time_offset', {'offset_ms': clock_offset_ms})
     emit('feed_status', {'online': feed_online, 'message': feed_message})
 
+# --- Overlay pages ----------------------------------------------------------------
+# OBS (Chromium 150+) blocks pages opened as "Local file" (origin http://absolute)
+# from talking to localhost. Serving the pages from this server makes them
+# same-origin with the WebSocket, so use these URLs in OBS Browser Sources:
+#   http://localhost:5000/ticker-front.html
+#   http://localhost:5000/ticker-terminal.html
+PAGES = ["ticker-front.html", "ticker-terminal.html"]
+
 @app.route('/')
 def index():
-    return "MT5 WebSocket Server is Running."
+    links = "".join(f'<li><a href="/{p}">http://localhost:5000/{p}</a></li>' for p in PAGES)
+    return f"<p>MT5 WebSocket Server is Running.</p><p>OBS Browser Source URLs:</p><ul>{links}</ul>"
+
+@app.route('/<page>')
+def overlay_page(page):
+    if page not in PAGES:
+        abort(404)
+    # max_age=0: OBS always gets the current version after an edit
+    return send_from_directory(BASE_DIR, page, max_age=0)
+
+@app.route('/vendor/<path:filename>')
+def vendor_file(filename):
+    return send_from_directory(os.path.join(BASE_DIR, "vendor"), filename)
 
 if __name__ == '__main__':
     thread = threading.Thread(target=background_tick_reader)

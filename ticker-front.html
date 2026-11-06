@@ -179,7 +179,10 @@
     <div id="status-dot"></div>
 
     <script>
-        const socket = io('http://localhost:5000');
+        // Served by ticker-back.py (http://localhost:5000/...) -> same origin.
+        // Opened any other way (e.g. as a file in a normal browser) -> localhost:5000.
+        const SERVER_URL = location.port === '5000' ? location.origin : 'http://localhost:5000';
+        const socket = io(SERVER_URL);
         let serverOffset = 0;
         // Symbols and their decimal places are sent by the server (see symbols.json)
         let symbolsKey = '';
