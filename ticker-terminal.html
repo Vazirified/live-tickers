@@ -210,8 +210,8 @@
 
             symbols = symbolList.map(item => item.symbol);
             dataHistory = {};
-            symbols.forEach(s => {
-                dataHistory[s] = { prices: [], high: -Infinity, low: Infinity, lastPrice: 0, prevIntervalPrice: 0 };
+            symbolList.forEach(({ symbol, digits }) => {
+                dataHistory[symbol] = { digits, prices: [], high: -Infinity, low: Infinity, lastPrice: 0, prevIntervalPrice: 0 };
             });
 
             symbols.forEach(s => {
@@ -276,11 +276,11 @@
             if (info) {
                 info.lastPrice = data.price;
                 const el = document.getElementById(`price-${data.symbol}`);
-                if (el) el.innerText = data.price.toFixed(5);
-                
+                if (el) el.innerText = data.price.toFixed(info.digits);
+
                 // Frequent Logs
                 if (Math.random() > 0.95) {
-                    addToLog(`DATA_IN: ${data.symbol} @ ${data.price.toFixed(4)}`);
+                    addToLog(`DATA_IN: ${data.symbol} @ ${data.price.toFixed(info.digits)}`);
                 }
             }
         });
@@ -339,12 +339,13 @@
                 const stdDev = Math.sqrt(prices.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / len);
                 const zScore = stdDev > 0 ? (info.lastPrice - mean) / stdDev : 0;
                 
-                document.getElementById(`sma20-${s}`).innerText = (prices.slice(-20).reduce((a,b)=>a+b,0)/Math.min(len,20)).toFixed(5);
+                const d = info.digits; // symbol's own precision from MT5
+                document.getElementById(`sma20-${s}`).innerText = (prices.slice(-20).reduce((a,b)=>a+b,0)/Math.min(len,20)).toFixed(d);
                 document.getElementById(`zscore-${s}`).innerText = zScore.toFixed(2) + " σ";
-                document.getElementById(`std-${s}`).innerText = stdDev.toFixed(6);
-                document.getElementById(`high-${s}`).innerText = info.high.toFixed(5);
-                document.getElementById(`low-${s}`).innerText = info.low.toFixed(5);
-                document.getElementById(`med-${s}`).innerText = ([...prices].sort((a,b)=>a-b)[Math.floor(len/2)]).toFixed(5);
+                document.getElementById(`std-${s}`).innerText = stdDev.toFixed(d + 1); // one extra digit: spread is small
+                document.getElementById(`high-${s}`).innerText = info.high.toFixed(d);
+                document.getElementById(`low-${s}`).innerText = info.low.toFixed(d);
+                document.getElementById(`med-${s}`).innerText = ([...prices].sort((a,b)=>a-b)[Math.floor(len/2)]).toFixed(d);
                 
                 // Sparkline Update
                 const spark = document.getElementById(`spark-${s}`);
