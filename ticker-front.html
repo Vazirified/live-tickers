@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MT5 Live Ticker Stripe</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@700&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #000000;
+            --text-main: #ffffff;
+            --up-color: #00ff88;
+            --down-color: #ff4444;
+            --accent: #3b82f6;
+            --stripe-height: 75px;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            height: var(--stripe-height);
+            display: flex;
+        }
+
+        /* --- Time Section (Fixed Left) --- */
+        #time-section {
+            width: 380px;
+            height: 100%;
+            background: #000;
+            border-right: 3px solid var(--accent);
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 2rem;
+            z-index: 100;
+            flex-shrink: 0;
+            box-shadow: 10px 0 20px rgba(0,0,0,0.8);
+        }
+
+        .time-label {
+            font-size: 0.85rem;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            margin-right: 1.5rem;
+            white-space: nowrap;
+            text-align: right;
+            border-right: 1px solid #333;
+            padding-right: 1.5rem;
+            height: 60%;
+            display: flex;
+            align-items: center;
+        }
+
+        .time-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            justify-content: center;
+            width: 160px;
+        }
+
+        .time-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.6rem;
+            line-height: 0.9;
+            text-align: right;
+        }
+
+        .date-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.28rem;
+            color: #888;
+            text-align: right;
+            margin-top: 0;
+            line-height: 0.9;
+            letter-spacing: 0;
+        }
+
+        /* --- Ticker Section (Scrolling) --- */
+        #ticker-container {
+            flex-grow: 1;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            background: #0a0a0a;
+            position: relative;
+        }
+
+        .ticker-track {
+            display: flex;
+            white-space: nowrap;
+            will-change: transform;
+            animation: scroll 40s linear infinite;
+        }
+
+        @keyframes scroll {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+
+        .asset {
+            display: inline-flex;
+            align-items: center;
+            padding: 0 3.5rem;
+            height: var(--stripe-height);
+            border-right: 1px solid #222;
+        }
+
+        .asset-name {
+            font-size: 1.1rem; 
+            color: #aaa;
+            margin-right: 1.25rem;
+            font-weight: 700;
+        }
+
+        .price-container {
+            display: flex;
+            align-items: baseline;
+            gap: 1rem;
+        }
+
+        .asset-price {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.4rem;
+            transition: color 0.4s ease;
+        }
+
+        .asset-change {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .up { color: var(--up-color); }
+        .down { color: var(--down-color); }
+
+        #status-dot {
+            position: fixed;
+            bottom: 5px;
+            right: 5px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #333;
+            z-index: 200;
+        }
+        .online { background: var(--up-color) !important; box-shadow: 0 0 5px var(--up-color); }
+    </style>
+</head>
+<body>
+
+    <div id="time-section">
+        <div id="time-label" class="time-label">UTC</div>
+        <div class="time-container">
+            <div id="time-display" class="time-value">00:00:00</div>
+            <div id="date-display" class="date-value">-- --- ----</div>
+        </div>
+    </div>
+
+    <div id="ticker-container">
+        <div id="track" class="ticker-track">
+            <!-- Template generator -->
+            <div id="assets-original" style="display: contents;"></div>
+            <div id="assets-duplicate" style="display: contents;"></div>
+        </div>
+    </div>
+
+    <div id="status-dot"></div>
+
+    <script>
+        const socket = io('http://localhost:5000');
+        let serverOffset = 0;
+        const symbols = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "EURGBP", "S&P500"];
+        const precisions = {"XAUUSD": 2, "EURUSD": 5, "GBPUSD": 5, "USDJPY": 3, "EURGBP": 5, "S&P500": 2};
+
+        // Initialize DOM structure
+        function initTicker() {
+            const original = document.getElementById('assets-original');
+            const duplicate = document.getElementById('assets-duplicate');
+            
+            symbols.forEach(sym => {
+                const assetHtml = `
+                    <div class="asset">
+                        <span class="asset-name">${sym}</span>
+                        <div class="price-container">
+                            <span id="${sym}" class="asset-price">---</span>
+                            <span id="${sym}_change" class="asset-change">(0.00%)</span>
+                        </div>
+                    </div>
+                `;
+                original.innerHTML += assetHtml;
+                duplicate.innerHTML += assetHtml.replace(`id="${sym}"`, `id="${sym}2"`).replace(`id="${sym}_change"`, `id="${sym}_change2"`);
+            });
+        }
+        initTicker();
+
+        const zones = [
+            { label: 'UTC', zone: 'UTC' },
+            { label: 'Istanbul', zone: 'Europe/Istanbul' },
+            { label: 'Tehran', zone: 'Asia/Tehran' }
+        ];
+        let currentZoneIndex = 0;
+
+        function cycleZone() {
+            currentZoneIndex = (currentZoneIndex + 1) % zones.length;
+            document.getElementById('time-label').innerText = zones[currentZoneIndex].label;
+        }
+        setInterval(cycleZone, 5000);
+
+        function updateClock() {
+            const now = new Date(Date.now() + serverOffset);
+            const zone = zones[currentZoneIndex].zone;
+
+            const timeStr = now.toLocaleTimeString('en-GB', { 
+                hour: '2-digit', minute: '2-digit', second: '2-digit', 
+                timeZone: zone, 
+                hour12: false 
+            });
+            document.getElementById('time-display').innerText = timeStr;
+
+            let dateStr;
+            try {
+                const options = { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: zone };
+                if (zones[currentZoneIndex].label === 'Tehran') {
+                    const parts = new Intl.DateTimeFormat('en-u-ca-persian', options).formatToParts(now);
+                    const y = parts.find(p => p.type === 'year').value;
+                    const m = parts.find(p => p.type === 'month').value;
+                    const d = parts.find(p => p.type === 'day').value;
+                    dateStr = `${y}/${m}/${d}`;
+                } else {
+                    const parts = new Intl.DateTimeFormat('en-GB', options).formatToParts(now);
+                    const y = parts.find(p => p.type === 'year').value;
+                    const m = parts.find(p => p.type === 'month').value;
+                    const d = parts.find(p => p.type === 'day').value;
+                    dateStr = `${y}-${m}-${d}`;
+                }
+            } catch (e) {
+                dateStr = "0000-00-00";
+            }
+            document.getElementById('date-display').innerText = dateStr;
+        }
+        setInterval(updateClock, 1000);
+
+        async function syncTime() {
+            try {
+                const start = Date.now();
+                const response = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
+                const data = await response.json();
+                serverOffset = (new Date(data.utc_datetime).getTime() + (Date.now() - start)/2) - Date.now();
+            } catch (e) {}
+        }
+        syncTime();
+        setInterval(syncTime, 900000);
+
+        socket.on('connect', () => document.getElementById('status-dot').classList.add('online'));
+        socket.on('disconnect', () => document.getElementById('status-dot').classList.remove('online'));
+
+        socket.on('price_update', (data) => {
+            [data.symbol, data.symbol + '2'].forEach((id, idx) => {
+                const el = document.getElementById(id);
+                const changeEl = document.getElementById(data.symbol + '_change' + (idx === 1 ? '2' : ''));
+                
+                if (!el || !changeEl) return;
+                
+                const precision = precisions[data.symbol] || 2;
+                const oldPrice = parseFloat(el.innerText.replace(/,/g, '')) || 0;
+                const newPrice = data.price;
+                
+                el.innerText = newPrice.toFixed(precision);
+                
+                // Clear any existing timeout for this specific element to prevent flickering
+                if (el.dataset.timeoutId) {
+                    clearTimeout(parseInt(el.dataset.timeoutId));
+                }
+
+                // Update color for "flash" effect on price
+                if (oldPrice > 0) { // Don't flash on first initialization
+                    if (newPrice > oldPrice) {
+                        el.className = 'asset-price up';
+                    } else if (newPrice < oldPrice) {
+                        el.className = 'asset-price down';
+                    }
+                    
+                    // Set a new timeout and store its ID in the element's dataset
+                    const tid = setTimeout(() => {
+                        el.className = 'asset-price';
+                        delete el.dataset.timeoutId;
+                    }, 1500);
+                    el.dataset.timeoutId = tid;
+                }
+
+                // Update percentage change
+                const change = data.change;
+                changeEl.innerText = '(' + (change > 0 ? '+' : '') + change.toFixed(2) + '%)';
+                changeEl.className = 'asset-change ' + (change > 0 ? 'up' : change < 0 ? 'down' : '');
+            });
+        });
+    </script>
+</body>
+</html>

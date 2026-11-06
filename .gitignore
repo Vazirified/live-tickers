@@ -1,0 +1,10 @@
+# Python virtual environment (recreate with setup.bat)
+.venv/
+__pycache__/
+*.pyc
+
+# OS / editor clutter
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

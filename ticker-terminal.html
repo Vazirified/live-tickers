@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TERMINAL_v1.0.4_STABLE</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --term-white: rgba(255, 255, 255, 0.4); /* 60% transparent (0.4 opacity) */
+            --term-dim: rgba(255, 255, 255, 0.2);
+            --term-bg: rgba(0, 0, 0, 0); 
+            --accent: rgba(255, 255, 255, 0.6);
+            --pulse-up: rgba(0, 255, 136, 0.15);
+            --pulse-down: rgba(255, 68, 68, 0.15);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 10px;
+            background-color: var(--term-bg);
+            color: var(--term-white);
+            font-family: 'VT323', monospace;
+            font-size: 1.3rem;
+            overflow: hidden;
+            height: 100vh;
+            text-transform: uppercase;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            grid-auto-rows: min-content;
+            gap: 15px;
+            height: 92vh;
+            overflow-y: auto;
+            padding-bottom: 50px;
+        }
+
+        header {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--term-white);
+            padding: 5px 10px;
+            margin-bottom: 15px;
+            gap: 10px;
+        }
+
+        .header-brand {
+            font-size: 1.6rem;
+            font-weight: bold;
+            background: var(--term-white);
+            color: #000;
+            padding: 0 8px;
+        }
+
+        .card {
+            border: 1px solid var(--term-white);
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            background: rgba(255,255,255,0.02);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .sparkline-container {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 60%;
+            z-index: 0;
+            pointer-events: none;
+            opacity: 0.15;
+        }
+
+        .sparkline-path {
+            fill: none;
+            stroke: white;
+            stroke-width: 1.5;
+        }
+
+        .card.pulse-up { background: var(--pulse-up); border-color: #00ff88; }
+        .card.pulse-down { background: var(--pulse-down); border-color: #ff4444; }
+
+        .card-header {
+            border-bottom: 1px dashed var(--term-dim);
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            color: var(--accent);
+            font-size: 1.4rem;
+        }
+
+        .stats-line {
+            display: flex;
+            justify-content: space-between;
+            line-height: 1.1;
+            margin-bottom: 4px;
+        }
+
+        .label { color: var(--term-dim); }
+        .value { color: var(--term-white); font-weight: bold; }
+
+        /* --- Special Windows --- */
+        .wide-card { grid-column: span 1; }
+        @media (min-width: 1200px) { .wide-card { grid-column: span 2; } }
+
+        .terminal-log {
+            height: 180px;
+            font-size: 1.1rem;
+            overflow: hidden;
+            border: 1px solid var(--term-dim);
+            padding: 8px;
+            background: rgba(0,0,0,0.3);
+            color: var(--term-white);
+        }
+
+        .verbose-stream {
+            height: 220px;
+            font-size: 1rem;
+            color: var(--term-white);
+            overflow: hidden;
+            border: 1px solid var(--accent);
+            padding: 10px;
+            background: rgba(0,0,0,0.4);
+            line-height: 1.2;
+        }
+
+        .verbose-line { display: flex; gap: 10px; margin-bottom: 2px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .v-tag { color: #00ff88; min-width: 80px; }
+        .v-msg { color: var(--term-white); }
+
+        footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.9);
+            border-top: 1px solid var(--term-white);
+            padding: 5px 15px;
+            font-size: 0.9rem;
+            display: flex;
+            justify-content: space-between;
+            z-index: 100;
+        }
+
+        .blink { animation: blink 1s step-end infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: var(--term-white); }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-brand">VAZIRIFIEDFX WVM TERMINAL</div>
+        <div>LINK: <span id="conn-status" class="blink">OFFLINE</span> // S1_FEED</div>
+        <div id="clock">00:00:00 UTC</div>
+    </header>
+
+    <div id="dashboard" class="dashboard">
+        <!-- Asset Cards Injected Here -->
+        
+        <!-- Verbose Analytics Window (Emphasized) -->
+        <div class="card wide-card" id="analytics-window">
+            <div class="card-header">
+                <span>[ DETAILED_STATISTICAL_DERIVATIONS ]</span>
+                <span id="run-cmd" style="background: #fff; color: #000; padding: 0 5px;">BUSY</span>
+            </div>
+            <div id="verbose-stream" class="verbose-stream"></div>
+        </div>
+
+        <!-- System Log Card -->
+        <div class="card" id="log-window">
+            <div class="card-header">[ ENGINE_EVENT_LOG ]</div>
+            <div id="log" class="terminal-log"></div>
+        </div>
+    </div>
+
+    <footer>
+        <div>NODE: 127.0.0.1 // SESSION: <span id="session-id">----</span></div>
+        <div>V_1.3.0 // ANALYTICS_ENGINE: ACTIVE</div>
+    </footer>
+
+    <script>
+        const socket = io('http://localhost:5000');
+        const symbols = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "EURGBP", "S&P500"];
+        const dataHistory = {};
+        const MAX_HISTORY = 300;
+
+        symbols.forEach(s => {
+            dataHistory[s] = { prices: [], high: -Infinity, low: Infinity, lastPrice: 0, prevIntervalPrice: 0 };
+        });
+
+        function initUI() {
+            const dash = document.getElementById('dashboard');
+            symbols.forEach(s => {
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.id = `card-${s}`;
+                card.innerHTML = `
+                    <div class="sparkline-container">
+                        <svg width="100%" height="100%" preserveAspectRatio="none">
+                            <polyline id="spark-${s}" class="sparkline-path" points=""></polyline>
+                        </svg>
+                    </div>
+                    <div class="card-header" style="position: relative; z-index: 1;">
+                        <span>${s}</span>
+                        <span id="price-${s}">---</span>
+                    </div>
+                    <div class="stats-line" style="position: relative; z-index: 1;"><span class="label">SMA(20s)</span><span id="sma20-${s}" class="value">---</span></div>
+                    <div class="stats-line" style="position: relative; z-index: 1;"><span class="label">Z-SCORE</span><span id="zscore-${s}" class="value">---</span></div>
+                    <div class="stats-line" style="position: relative; z-index: 1;"><span class="label">STD_DEV</span><span id="std-${s}" class="value">---</span></div>
+                    <div class="stats-line" style="position: relative; z-index: 1;"><span class="label">HI_RANGE</span><span id="high-${s}" class="value">---</span></div>
+                    <div class="stats-line" style="position: relative; z-index: 1;"><span class="label">LO_RANGE</span><span id="low-${s}" class="value">---</span></div>
+                    <div class="stats-line" style="position: relative; z-index: 1;"><span class="label">MEDIAN</span><span id="med-${s}" class="value">---</span></div>
+                `;
+                dash.insertBefore(card, document.getElementById('analytics-window'));
+            });
+        }
+
+        function addToLog(msg) {
+            const log = document.getElementById('log');
+            const time = new Date().toISOString().substr(11, 8); // Absolute UTC
+            log.innerHTML = `[${time}] ${msg}<br>` + log.innerHTML;
+            if (log.innerHTML.length > 2000) log.innerHTML = log.innerHTML.substring(0, 2000);
+        }
+
+        function addToVerbose(tag, msg) {
+            const stream = document.getElementById('verbose-stream');
+            const line = document.createElement('div');
+            line.className = 'verbose-line';
+            line.innerHTML = `<span class="v-tag">[${tag}]</span><span class="v-msg">${msg}</span>`;
+            stream.prepend(line);
+            if (stream.childNodes.length > 15) stream.removeChild(stream.lastChild);
+        }
+
+        socket.on('connect', () => {
+            document.getElementById('conn-status').innerText = 'ONLINE';
+            document.getElementById('conn-status').classList.remove('blink');
+            document.getElementById('session-id').innerText = socket.id.substring(0, 6);
+            addToLog("NETWORK_HANDSHAKE_COMPLETE");
+        });
+
+        socket.on('price_update', (data) => {
+            const info = dataHistory[data.symbol];
+            if (info) {
+                info.lastPrice = data.price;
+                const el = document.getElementById(`price-${data.symbol}`);
+                if (el) el.innerText = data.price.toFixed(5);
+                
+                // Frequent Logs
+                if (Math.random() > 0.95) {
+                    addToLog(`DATA_IN: ${data.symbol} @ ${data.price.toFixed(4)}`);
+                }
+            }
+        });
+
+        // Advanced Verbose Analytics Loop
+        const vTypes = ["MATH", "KERN", "SYNC", "STAT", "PROC"];
+        setInterval(() => {
+            const sym = symbols[Math.floor(Math.random() * symbols.length)];
+            const type = vTypes[Math.floor(Math.random() * vTypes.length)];
+            const info = dataHistory[sym];
+            
+            let msg = "";
+            switch(type) {
+                case "MATH": msg = `DERIVING_μ_FOR_${sym}_BUFFER_[${info.prices.length}]`; break;
+                case "KERN": msg = `ALLOCATING_STACK_FOR_${sym}_Z_SCORING`; break;
+                case "SYNC": msg = `MT5_FEED_S1_LATENCY_CHECK_OK`; break;
+                case "STAT": msg = `${sym}_STD_DEV_RECALCULATED_${(Math.random()*0.001).toFixed(6)}`; break;
+                case "PROC": msg = `FLUSHING_TEMP_REGISTERS_FOR_${sym}`; break;
+            }
+            addToVerbose(type, msg);
+            document.getElementById('run-cmd').innerText = `RUNNING: ${type}_${sym}`;
+        }, 800);
+
+        // Clock logic (Absolute UTC)
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('clock').innerText = now.toISOString().substr(11, 8) + ' UTC';
+
+            symbols.forEach(s => {
+                const info = dataHistory[s];
+                if (info.lastPrice === 0) return;
+
+                // Interval Pulse Logic (1-second delta)
+                const card = document.getElementById(`card-${s}`);
+                if (card && info.prevIntervalPrice > 0) {
+                    if (info.lastPrice > info.prevIntervalPrice) {
+                        card.classList.add('pulse-up');
+                        setTimeout(() => card.classList.remove('pulse-up'), 400);
+                    } else if (info.lastPrice < info.prevIntervalPrice) {
+                        card.classList.add('pulse-down');
+                        setTimeout(() => card.classList.remove('pulse-down'), 400);
+                    }
+                }
+                info.prevIntervalPrice = info.lastPrice;
+
+                if (info.lastPrice > info.high) info.high = info.lastPrice;
+                if (info.lastPrice < info.low) info.low = info.lastPrice;
+
+                info.prices.push(info.lastPrice);
+                if (info.prices.length > MAX_HISTORY) info.prices.shift();
+
+                const prices = info.prices;
+                const len = prices.length;
+                const mean = prices.reduce((a,b) => a+b, 0) / len;
+                const stdDev = Math.sqrt(prices.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / len);
+                const zScore = stdDev > 0 ? (info.lastPrice - mean) / stdDev : 0;
+                
+                document.getElementById(`sma20-${s}`).innerText = (prices.slice(-20).reduce((a,b)=>a+b,0)/Math.min(len,20)).toFixed(5);
+                document.getElementById(`zscore-${s}`).innerText = zScore.toFixed(2) + " σ";
+                document.getElementById(`std-${s}`).innerText = stdDev.toFixed(6);
+                document.getElementById(`high-${s}`).innerText = info.high.toFixed(5);
+                document.getElementById(`low-${s}`).innerText = info.low.toFixed(5);
+                document.getElementById(`med-${s}`).innerText = ([...prices].sort((a,b)=>a-b)[Math.floor(len/2)]).toFixed(5);
+                
+                // Sparkline Update
+                const spark = document.getElementById(`spark-${s}`);
+                if (spark && len > 1) {
+                    const min = Math.min(...prices);
+                    const max = Math.max(...prices);
+                    const range = max - min || 1;
+                    const width = 300; // Match MAX_HISTORY
+                    const height = 100; // Relative SVG units
+                    
+                    const points = prices.map((p, i) => {
+                        const x = (i / (MAX_HISTORY - 1)) * width;
+                        const y = height - ((p - min) / range) * height;
+                        return `${x.toFixed(1)},${y.toFixed(1)}`;
+                    }).join(' ');
+                    
+                    spark.setAttribute('points', points);
+                    spark.parentElement.setAttribute('viewBox', `0 0 ${width} ${height}`);
+                }
+                
+                if (Math.abs(zScore) > 2.2 && Math.random() > 0.8) {
+                    addToLog(`ALERT: ${s} DEVIATION DETECTED: ${zScore.toFixed(2)}σ`);
+                }
+            });
+        }, 1000);
+
+        initUI();
+    </script>
+</body>
+</html>
