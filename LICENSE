@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
---------------------------------------------------------------------------------
-Third-party files in vendor/ keep their own licences:
-  - vendor/socket.io.min.js  Socket.IO client v4.7.2, MIT License
-                             (c) 2014-2023 Guillermo Rauch
-  - vendor/fonts/*.woff2     Inter, JetBrains Mono, VT323
-                             SIL Open Font License 1.1, see vendor/fonts/OFL.txt
